@@ -33,7 +33,6 @@ void RefactorHandler::run(const MatchFinder::MatchResult &Result) {
     }
 
     if (const auto *Method = Result.Nodes.getNodeAs<CXXMethodDecl>("missingOverride")) {
-        // if (Method && Method->size_overridden_methods() > 0 && !Method->hasAttr<attr::Override>()) {
         handle_miss_override(Method, Diag, SM);
     }
 
@@ -53,14 +52,23 @@ void RefactorHandler::handle_nv_dtor(const CXXDestructorDecl *Dtor, DiagnosticsE
         return;
     }
 
+    bool hasDerived = false;
     for (auto &OtherDecl : ClassDecl->getTranslationUnitDecl()->decls()) {
         if (const auto *CRD = llvm::dyn_cast<CXXRecordDecl>(OtherDecl)) {
             for (auto &Base : CRD->bases()) {
                 if (Base.getType()->getAsCXXRecordDecl() == ClassDecl) {
-                    return;
+                    hasDerived = true;
+                    break;
                 }
             }
         }
+        if (hasDerived) {
+            break;
+        }
+    }
+
+    if (!hasDerived) {
+        return;
     }
 
     if (virtualDtorLocations.count(Dtor->getLocation().getRawEncoding()) > 0) {
