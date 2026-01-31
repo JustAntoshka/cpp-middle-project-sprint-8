@@ -7,13 +7,18 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <clang-c/Index.h>
 #include <clang/AST/Attrs.inc>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/StmtCXX.h>
 #include <clang/AST/Type.h>
+#include <clang/AST/TypeLoc.h>
+#include <clang/Basic/AttrKinds.h>
 #include <clang/Basic/LangOptions.h>
 #include <clang/Basic/SourceLocation.h>
+#include <llvm-20/llvm/ADT/DenseSet.h>
 #include <llvm-20/llvm/Support/Casting.h>
+#include <llvm-20/llvm/Support/Errc.h>
 #include <unordered_set>
 
 #include "RefactorTool.h"
@@ -47,40 +52,31 @@ void RefactorHandler::handle_nv_dtor(const CXXDestructorDecl *Dtor, DiagnosticsE
         return;
     }
 
-    const CXXRecordDecl *ClassDecl = Dtor->getParent();
-    if (!ClassDecl->hasDefinition()) {
-        return;
-    }
+    const CXXRecordDecl *Base = Dtor->getParent();
+    Base = Base->getCanonicalDecl();
 
-    bool hasDerived = false;
-    for (auto &OtherDecl : ClassDecl->getTranslationUnitDecl()->decls()) {
-        if (const auto *CRD = llvm::dyn_cast<CXXRecordDecl>(OtherDecl)) {
-            for (auto &Base : CRD->bases()) {
-                if (Base.getType()->getAsCXXRecordDecl() == ClassDecl) {
-                    hasDerived = true;
-                    break;
+    for (const Decl *D : Base->getTranslationUnitDecl()->decls()) {
+        const auto *CRD = dyn_cast<CXXRecordDecl>(D);
+        if (!CRD || !CRD->hasDefinition()) {
+            continue;
+        }
+
+        for (const auto &BaseSpec : CRD->bases()) {
+            const CXXRecordDecl *B = BaseSpec.getType()->getAsCXXRecordDecl();
+            if (!B)
+                continue;
+            if (B->getCanonicalDecl() == Base) {
+                if (virtualDtorLocations.count(Dtor->getLocation().getRawEncoding()) == 0) {
+                    virtualDtorLocations.insert(Dtor->getLocation().getRawEncoding());
+
+                    Rewrite.InsertTextBefore(Dtor->getBeginLoc(), "virtual ");
+
+                    const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Handled non-virtual dtor");
+                    Diag.Report(Dtor->getLocation(), DiagID);
                 }
             }
         }
-        if (hasDerived) {
-            break;
-        }
     }
-
-    if (!hasDerived) {
-        return;
-    }
-
-    if (virtualDtorLocations.count(Dtor->getLocation().getRawEncoding()) > 0) {
-        return;
-    }
-
-    virtualDtorLocations.insert(Dtor->getLocation().getRawEncoding());
-
-    Rewrite.InsertTextBefore(Dtor->getLocation(), "virtual ");
-
-    const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Handled non-virtual dtor");
-    Diag.Report(Dtor->getLocation(), DiagID);
 }
 
 // todo: необходимо реализовать обработку случая отсутствие override
@@ -89,11 +85,13 @@ void RefactorHandler::handle_miss_override(const CXXMethodDecl *Method, Diagnost
         return;
     }
 
-    SourceLocation InsertLoc = Method->getNameInfo().getEndLoc();
-    // clang-format off
-    SourceLocation AfterParen = Lexer::findLocationAfterToken(InsertLoc,
-        tok::r_paren, SM, LangOptions(), /*SkipTrailingWhitespaceAndNewLine*/ true);
-    // clang-format on
+    const TypeSourceInfo *TSI = Method->getTypeSourceInfo();
+    if (!TSI) {
+        return;
+    }
+
+    FunctionProtoTypeLoc FPTL = TSI->getTypeLoc().getAs<FunctionProtoTypeLoc>();
+    SourceLocation AfterParen = FPTL.getRParenLoc().getLocWithOffset(1);
 
     if (AfterParen.isValid()) {
         Rewrite.InsertTextAfter(AfterParen, " override");
@@ -114,13 +112,8 @@ void RefactorHandler::handle_crange_for(const VarDecl *LoopVar, DiagnosticsEngin
         return;
     }
 
-    TypeLoc TL = LoopVar->getTypeSourceInfo()->getTypeLoc();
-    SourceLocation TypeEnd = TL.getEndLoc();
-    if (!TypeEnd.isValid()) {
-        return;
-    }
-
-    Rewrite.InsertTextAfter(TypeEnd, "&");
+    const auto InsertLoc = LoopVar->getLocation();
+    Rewrite.InsertTextAfter(InsertLoc, "& ");
     const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Handled range for");
     Diag.Report(LoopVar->getLocation(), DiagID);
 }
@@ -138,6 +131,7 @@ auto NvDtorMatcher() {
     // clang-format off
     return cxxDestructorDecl(
         unless(isVirtual()),
+        unless(isImplicit()),
         ofClass(
             cxxRecordDecl(
                 isDefinition()
@@ -150,22 +144,24 @@ auto NvDtorMatcher() {
 auto NoOverrideMatcher() {
     // clang-format off
     return cxxMethodDecl(
-        isVirtual(),
-        unless(isOverride()),
-        ofClass(isDefinition())
+        isOverride(),
+        unless(hasAttr(attr::Override)),
+        unless(isImplicit()),
+        unless(cxxDestructorDecl())
     ).bind("missingOverride");
     // clang-format on
 }
 
 auto NoRefConstVarInRangeLoopMatcher() {
     // clang-format off
-    return varDecl(
-        hasParent(cxxForRangeStmt()),
-        hasType(qualType(
-            isConstQualified(),
-            unless(referenceType())
-        ))
-    ).bind("loopVar");
+    return cxxForRangeStmt(
+        hasLoopVariable(
+            varDecl(
+                hasType(isConstQualified()),
+                unless(hasType(referenceType()))
+            ).bind("loopVar")
+        )
+    );
     // clang-format on
 }
 

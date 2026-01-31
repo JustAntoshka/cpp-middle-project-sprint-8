@@ -34,7 +34,7 @@ static std::string runTool(const std::string &Code) {
     return Result;
 }
 
-TEST(Refactor, AddVirtualDestructor) {
+TEST(VirtualDtor, Add) {
     const char *Input = R"cpp(
         struct Base {
             ~Base();
@@ -55,12 +55,33 @@ TEST(Refactor, AddVirtualDestructor) {
     EXPECT_EQ(Output, Expected);
 }
 
-TEST(Refactor, AddOverrideSpecifier) {
+TEST(VirtualDtor, NoAdd) {
+    const char *Input = R"cpp(
+        struct Base {
+            virtual ~Base();
+        };
+
+        struct Derived : Base {};
+    )cpp";
+
+    const char *Expected = R"cpp(
+        struct Base {
+            virtual ~Base();
+        };
+
+        struct Derived : Base {};
+    )cpp";
+
+    std::string Output = runTool(Input);
+    EXPECT_EQ(Output, Expected);
+}
+
+TEST(OverrideSpecifier, Add) {
     const char *Input = R"cpp(
         struct Base {
             virtual void foo();
         };
-        
+
         struct Derived : Base {
             void foo();
         };
@@ -70,7 +91,7 @@ TEST(Refactor, AddOverrideSpecifier) {
         struct Base {
             virtual void foo();
         };
-    
+
         struct Derived : Base {
             void foo() override;
         };
@@ -80,12 +101,38 @@ TEST(Refactor, AddOverrideSpecifier) {
     EXPECT_EQ(Output, Expected);
 }
 
-TEST(Refactor, FixConstRangeFor) {
+TEST(OverrideSpecifier, NoAdd) {
+    const char *Input = R"cpp(
+        struct Base {
+            virtual void foo();
+        };
+
+        struct Derived : Base {
+            void foo() override;
+        };
+    )cpp";
+
+    const char *Expected = R"cpp(
+        struct Base {
+            virtual void foo();
+        };
+
+        struct Derived : Base {
+            void foo() override;
+        };
+    )cpp";
+
+    std::string Output = runTool(Input);
+    EXPECT_EQ(Output, Expected);
+}
+
+TEST(RangeFor, Add) {
     const char *Input = R"cpp(
         #include <vector>
+        #include <string>
 
-        void f(const std::vector<int> &v) {
-            for (const int x : v) {
+        void f(const std::vector<std::string> &v) {
+            for (const auto x : v) {
                 (void)x;
             }
         }
@@ -93,9 +140,37 @@ TEST(Refactor, FixConstRangeFor) {
 
     const char *Expected = R"cpp(
         #include <vector>
-        
-        void f(const std::vector<int> &v) {
-            for (const int& x : v) {
+        #include <string>
+
+        void f(const std::vector<std::string> &v) {
+            for (const auto & x : v) {
+                (void)x;
+            }
+        }
+    )cpp";
+
+    std::string Output = runTool(Input);
+    EXPECT_EQ(Output, Expected);
+}
+
+TEST(RangeFor, NoAdd) {
+    const char *Input = R"cpp(
+        #include <vector>
+        #include <string>
+
+        void f(const std::vector<std::string> &v) {
+            for (const auto & x : v) {
+                (void)x;
+            }
+        }
+    )cpp";
+
+    const char *Expected = R"cpp(
+        #include <vector>
+        #include <string>
+
+        void f(const std::vector<std::string> &v) {
+            for (const auto & x : v) {
                 (void)x;
             }
         }
