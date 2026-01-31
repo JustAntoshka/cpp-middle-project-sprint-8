@@ -1,0 +1,18 @@
+
+ Performance counter stats for '/workspaces/cpp-middle-project-sprint-8/tests/tests_data/tmp/perf/before/perf_example':
+
+           1810.59 msec task-clock                       #    1.000 CPUs utilized             
+                 8      context-switches                 #    4.418 /sec                      
+                 0      cpu-migrations                   #    0.000 /sec                      
+            781385      page-faults                      #  431.564 K/sec                     
+        8599907665      instructions                     #    1.30  insn per cycle            
+        6599414834      cycles                           #    3.645 GHz                       
+        1640552221      branches                         #  906.087 M/sec                     
+           1111713      branch-misses                    #    0.07% of all branches           
+
+       1.811351778 seconds time elapsed
+
+       0.794592000 seconds user
+       1.016478000 seconds sys
+
+

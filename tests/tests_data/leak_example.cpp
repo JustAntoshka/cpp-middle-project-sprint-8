@@ -2,7 +2,7 @@
 
 class Base {
 public:
-    virtual ~Base() {}  // Невиртуальный
+    ~Base() {}  // Невиртуальный
 };
 
 class Derived : public Base {
